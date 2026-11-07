@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RagDemo</title>
+  <style>
+    :root {
+      --bg: #f7f7f5; --panel: #ffffff; --text: #1d1d1b; --muted: #6b6b66;
+      --border: #e2e2dc; --accent: #2457c5; --accent-text: #ffffff; --error: #b3261e;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #161615; --panel: #1f1f1e; --text: #ececea; --muted: #a0a09a;
+        --border: #34342f; --accent: #7aa2ff; --accent-text: #0e1a33; --error: #ff8a80;
+      }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text);
+           font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; }
+    h1 { font-size: 1.6rem; margin: 0 0 4px; }
+    h2 { font-size: 1.05rem; margin: 0 0 12px; }
+    p.lead { color: var(--muted); margin: 0 0 24px; }
+    section { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+              padding: 20px; margin-bottom: 20px; }
+    label { display: block; font-size: .9rem; color: var(--muted); margin-bottom: 6px; }
+    input[type=text], input[type=password], textarea {
+      width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
+      background: var(--bg); color: var(--text); font: inherit; }
+    textarea { min-height: 80px; resize: vertical; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+    button { padding: 9px 18px; border: 0; border-radius: 8px; background: var(--accent);
+             color: var(--accent-text); font: inherit; font-weight: 600; cursor: pointer; }
+    button:disabled { opacity: .55; cursor: default; }
+    button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--border); }
+    .status { font-size: .9rem; color: var(--muted); }
+    .status.error { color: var(--error); }
+    ul.docs { list-style: none; padding: 0; margin: 12px 0 0; font-size: .92rem; }
+    ul.docs li { padding: 6px 0; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
+    .answer { white-space: pre-wrap; margin: 0 0 16px; }
+    .answer sup a { text-decoration: none; font-weight: 600; color: var(--accent); }
+    ol.sources { padding-left: 22px; margin: 0; }
+    ol.sources li { margin-bottom: 12px; overflow-wrap: anywhere; }
+    ol.sources a { color: var(--accent); font-weight: 600; }
+    .snippet { color: var(--muted); font-size: .9rem; margin-top: 2px; }
+    .uri { color: var(--muted); font-size: .8rem; font-family: ui-monospace, Consolas, monospace; }
+    details summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>RagDemo</h1>
+  <p class="lead">Upload documents, then ask questions. Answers come only from your documents and cite their sources.</p>
+
+  <section>
+    <h2>1. Add a document</h2>
+    <label for="file">PDF, TXT, MD, HTML or DOCX, up to 10 MB</label>
+    <input id="file" type="file" accept=".pdf,.txt,.md,.html,.htm,.docx">
+    <details style="margin-top:12px">
+      <summary>Upload key (if the server requires one)</summary>
+      <input id="apiKey" type="password" autocomplete="off" style="margin-top:8px" placeholder="X-Api-Key">
+    </details>
+    <div class="row">
+      <button id="uploadBtn">Upload</button>
+      <span id="uploadStatus" class="status" role="status"></span>
+    </div>
+  </section>
+
+  <section>
+    <h2>2. Indexed documents</h2>
+    <div class="row" style="margin-top:0">
+      <button id="refreshBtn" class="secondary">Refresh</button>
+      <span class="status">New uploads take a few minutes to appear.</span>
+    </div>
+    <ul id="docs" class="docs"></ul>
+  </section>
+
+  <section>
+    <h2>3. Ask a question</h2>
+    <label for="question">Question</label>
+    <textarea id="question" maxlength="1000" placeholder="What does the report say about…?"></textarea>
+    <div class="row">
+      <button id="askBtn">Ask</button>
+      <span id="askStatus" class="status" role="status"></span>
+    </div>
+  </section>
+
+  <section id="result" hidden>
+    <h2>Answer</h2>
+    <p id="answer" class="answer"></p>
+    <h2 id="sourcesTitle">Sources</h2>
+    <ol id="sources" class="sources"></ol>
+  </section>
+</main>
+
+<script>
+  const $ = id => document.getElementById(id);
+
+  // gs://bucket/path → console link (opens for anyone with access to the bucket).
+  const browserUrl = uri => uri.startsWith("gs://")
+    ? "https://storage.cloud.google.com/" + uri.slice(5).split("/").map(encodeURIComponent).join("/")
+    : uri;
+
+  function setStatus(el, text, isError = false) {
+    el.textContent = text;
+    el.classList.toggle("error", isError);
+  }
+
+  async function errorText(response) {
+    if (response.status === 429) return "Too many requests. Wait a minute and try again.";
+    try {
+      const problem = await response.json();
+      const fieldErrors = problem.errors ? Object.values(problem.errors).flat().join(" ") : "";
+      return fieldErrors || problem.detail || problem.title || `Request failed (${response.status}).`;
+    } catch {
+      return `Request failed (${response.status}).`;
+    }
+  }
+
+  async function loadDocuments() {
+    const list = $("docs");
+    list.replaceChildren();
+    try {
+      const response = await fetch("/api/documents");
+      if (!response.ok) throw new Error(await errorText(response));
+      const docs = await response.json();
+      if (docs.length === 0) {
+        list.append(Object.assign(document.createElement("li"), { textContent: "No documents yet." }));
+      }
+      for (const doc of docs) {
+        const li = document.createElement("li");
+        li.textContent = doc.fileName || doc.id;
+        const uri = Object.assign(document.createElement("div"), { className: "uri", textContent: doc.uri });
+        li.append(uri);
+        list.append(li);
+      }
+    } catch (e) {
+      list.append(Object.assign(document.createElement("li"), { textContent: e.message, className: "status error" }));
+    }
+  }
+
+  $("uploadBtn").addEventListener("click", async () => {
+    const file = $("file").files[0];
+    const status = $("uploadStatus");
+    if (!file) return setStatus(status, "Choose a file first.", true);
+
+    const form = new FormData();
+    form.append("file", file);
+    const headers = {};
+    const key = $("apiKey").value.trim();
+    if (key) headers["X-Api-Key"] = key;
+
+    $("uploadBtn").disabled = true;
+    setStatus(status, "Uploading…");
+    try {
+      const response = await fetch("/api/documents", { method: "POST", body: form, headers });
+      if (!response.ok) throw new Error(await errorText(response));
+      setStatus(status, `Uploaded. Indexing has started and takes a few minutes.`);
+      $("file").value = "";
+    } catch (e) {
+      setStatus(status, e.message, true);
+    } finally {
+      $("uploadBtn").disabled = false;
+    }
+  });
+
+  // Builds the answer with [n] markers turned into links to the source list. Uses DOM nodes, not innerHTML.
+  function renderAnswer(text, citations) {
+    const known = new Set(citations.map(c => c.number));
+    const target = $("answer");
+    target.replaceChildren();
+    let last = 0;
+    for (const match of text.matchAll(/\[(\d+)\]/g)) {
+      const n = Number(match[1]);
+      if (!known.has(n)) continue;
+      target.append(text.slice(last, match.index));
+      const sup = document.createElement("sup");
+      sup.append(Object.assign(document.createElement("a"), { href: `#source-${n}`, textContent: `[${n}]` }));
+      target.append(sup);
+      last = match.index + match[0].length;
+    }
+    target.append(text.slice(last));
+  }
+
+  function renderSources(citations) {
+    const list = $("sources");
+    list.replaceChildren();
+    $("sourcesTitle").hidden = citations.length === 0;
+    for (const c of citations) {
+      const li = document.createElement("li");
+      li.id = `source-${c.number}`;
+      li.value = c.number;
+      const link = Object.assign(document.createElement("a"), {
+        href: browserUrl(c.uri), textContent: c.title, target: "_blank", rel: "noopener"
+      });
+      li.append(link);
+      if (c.snippet) li.append(Object.assign(document.createElement("div"), { className: "snippet", textContent: c.snippet }));
+      li.append(Object.assign(document.createElement("div"), { className: "uri", textContent: c.uri }));
+      list.append(li);
+    }
+  }
+
+  async function ask() {
+    const question = $("question").value.trim();
+    const status = $("askStatus");
+    if (!question) return setStatus(status, "Type a question first.", true);
+
+    $("askBtn").disabled = true;
+    setStatus(status, "Thinking…");
+    try {
+      const response = await fetch("/api/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question })
+      });
+      if (!response.ok) throw new Error(await errorText(response));
+      const result = await response.json();
+      renderAnswer(result.answer, result.citations);
+      renderSources(result.citations);
+      $("result").hidden = false;
+      setStatus(status, "");
+    } catch (e) {
+      setStatus(status, e.message, true);
+    } finally {
+      $("askBtn").disabled = false;
+    }
+  }
+
+  $("askBtn").addEventListener("click", ask);
+  $("question").addEventListener("keydown", e => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) ask();
+  });
+  $("refreshBtn").addEventListener("click", loadDocuments);
+  loadDocuments();
+</script>
+</body>
+</html>

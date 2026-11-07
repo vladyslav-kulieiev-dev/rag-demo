@@ -1,0 +1,19 @@
+# Build output
+bin/
+obj/
+*.user
+.vs/
+.vscode/
+.idea/
+TestResults/
+
+# Secrets: never commit keys or local settings
+*.json.key
+*-key.json
+*credentials*.json
+service-account*.json
+appsettings.*.local.json
+.env
+
+# Personal planning notes
+Plan.txt
