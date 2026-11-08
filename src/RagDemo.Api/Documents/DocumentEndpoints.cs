@@ -21,6 +21,12 @@ public static class DocumentEndpoints
         group.MapGet("/", async (IDocumentIndexer indexer, CancellationToken ct) =>
             TypedResults.Ok(await indexer.ListAsync(ct)));
 
+        group.MapGet("/file", async (string uri, IDocumentIndexer indexer, CancellationToken ct) =>
+        {
+            var file = await indexer.DownloadAsync(uri, ct);
+            return file is null ? Results.NotFound() : Results.File(file.Content, file.ContentType);
+        });
+
         return group;
     }
 

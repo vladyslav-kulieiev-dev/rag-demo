@@ -33,6 +33,9 @@ public class StartupTests
 
         public Task<IReadOnlyList<IndexedDocument>> ListAsync(CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<IndexedDocument>>([]);
+
+        public Task<StoredFile?> DownloadAsync(string gcsUri, CancellationToken ct) =>
+            Task.FromResult<StoredFile?>(null);
     }
 
     private sealed class FakeAnswerClient : IAnswerClient
