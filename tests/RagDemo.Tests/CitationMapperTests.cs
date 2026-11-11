@@ -172,6 +172,7 @@ public class CitationMapperTests
         var citation = Assert.Single(CitationMapper.Map(answer).Citations);
         Assert.Equal("report.pdf", citation.Title); // falls back to the file name when there's no title
         Assert.Equal("a chunk of text", citation.Snippet);
+        Assert.Equal("  a   chunk\nof text ", citation.Chunk); // the whole chunk, untouched, for highlighting
     }
 
     [Fact]

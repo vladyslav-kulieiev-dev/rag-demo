@@ -12,7 +12,9 @@ public sealed record AskResponse(
     IReadOnlyList<AnswerSegment> Segments);
 
 /// <param name="Number">The n used in the [n] markers, starting at 1.</param>
-public sealed record Citation(int Number, string Title, string Uri, string Snippet);
+/// <param name="Snippet">The start of the cited chunk, shortened for display.</param>
+/// <param name="Chunk">The whole cited chunk, used to highlight it in the document.</param>
+public sealed record Citation(int Number, string Title, string Uri, string Snippet, string Chunk);
 
 /// <param name="Text">A piece of the answer text, without markers.</param>
 /// <param name="Sources">The citations at the end of this piece, in number order.</param>

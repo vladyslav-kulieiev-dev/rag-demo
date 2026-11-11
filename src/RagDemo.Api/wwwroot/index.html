@@ -98,30 +98,16 @@
   const $ = id => document.getElementById(id);
 
   // Files are served through the API, so visitors don't need access to the bucket.
-const browserUrl = uri => "/api/documents/file?uri=" + encodeURIComponent(uri);
+  const fileUrl = uri => "/api/documents/file?uri=" + encodeURIComponent(uri);
+  const isPdf = uri => uri.toLowerCase().endsWith(".pdf");
 
-// A short phrase from the snippet for PDF.js to find and highlight.
-// The snippet is the parser's cleaned-up text, so searching for all of it rarely matches the PDF.
-function searchPhrase(snippet) {
-    const words = snippet
-        .replace(/[#*_`>|]/g, " ")   // markdown symbols added by the layout parser
-        .replace(/…$/, "")           // the "…" our API adds to long snippets
-        .split(/\s+/)
-        .filter(w => w.length > 0);
-    // Skip the first words when possible: chunks often start with a heading that looks different in the PDF.
-    const start = words.length > 12 ? 4 : 0;
-    return words.slice(start, start + 6).join(" ");
-}
-
-// PDFs open in PDF.js with the phrase highlighted; other files open as before.
-function sourceUrl(citation) {
-    const fileUrl = browserUrl(citation.uri);
-    if (!citation.uri.toLowerCase().endsWith(".pdf")) return fileUrl;
-
-    const phrase = searchPhrase(citation.snippet || "");
-    const hash = phrase ? `#search=${encodeURIComponent(phrase)}&phrase=true` : "";
-    return `/pdfjs/web/viewer.html?file=${encodeURIComponent(fileUrl)}${hash}`;
-}
+  // PDFs open in source.html, which highlights the cited chunk in PDF.js; other files open directly.
+  // The texts go in the hash (after #), so long chunks are never sent to the server.
+  function sourceUrl(citation, sentence) {
+    if (!isPdf(citation.uri)) return fileUrl(citation.uri);
+    const highlight = new URLSearchParams({ chunk: citation.chunk || "", q: sentence || citation.snippet || "" });
+    return "/source.html?" + new URLSearchParams({ uri: citation.uri }) + "#" + highlight;
+  }
 
   function setStatus(el, text, isError = false) {
     el.textContent = text;
@@ -188,22 +174,31 @@ function sourceUrl(citation) {
     }
   });
 
-  // Builds the answer with [n] markers turned into links to the source list. Uses DOM nodes, not innerHTML.
-  function renderAnswer(text, citations) {
-    const known = new Set(citations.map(c => c.number));
+  // Builds the answer from its segments. Each [n] marker opens the PDF with the cited chunk highlighted
+  // (the tooltip shows the sentence in it that best supports this part of the answer); for other files
+  // it jumps to the source list. Uses DOM nodes, not innerHTML.
+  function renderAnswer(segments, citations) {
+    const byNumber = new Map(citations.map(c => [c.number, c]));
     const target = $("answer");
     target.replaceChildren();
-    let last = 0;
-    for (const match of text.matchAll(/\[(\d+)\]/g)) {
-      const n = Number(match[1]);
-      if (!known.has(n)) continue;
-      target.append(text.slice(last, match.index));
-      const sup = document.createElement("sup");
-      sup.append(Object.assign(document.createElement("a"), { href: `#source-${n}`, textContent: `[${n}]` }));
-      target.append(sup);
-      last = match.index + match[0].length;
+    for (const segment of segments) {
+      target.append(segment.text);
+      for (const source of segment.sources) {
+        const citation = byNumber.get(source.number);
+        if (!citation) continue;
+        const link = Object.assign(document.createElement("a"), { textContent: `[${source.number}]` });
+        if (isPdf(citation.uri)) {
+          Object.assign(link, {
+            href: sourceUrl(citation, source.passage), target: "_blank", rel: "noopener", title: source.passage || citation.title
+          });
+        } else {
+          link.href = `#source-${source.number}`;
+        }
+        const sup = document.createElement("sup");
+        sup.append(link);
+        target.append(sup);
+      }
     }
-    target.append(text.slice(last));
   }
 
   function renderSources(citations) {
@@ -215,7 +210,7 @@ function sourceUrl(citation) {
       li.id = `source-${c.number}`;
       li.value = c.number;
       const link = Object.assign(document.createElement("a"), {
-          href: sourceUrl(c), textContent: c.title, target: "_blank", rel: "noopener"
+        href: sourceUrl(c), textContent: c.title, target: "_blank", rel: "noopener"
       });
       li.append(link);
       if (c.snippet) li.append(Object.assign(document.createElement("div"), { className: "snippet", textContent: c.snippet }));
@@ -239,7 +234,7 @@ function sourceUrl(citation) {
       });
       if (!response.ok) throw new Error(await errorText(response));
       const result = await response.json();
-      renderAnswer(result.answer, result.citations);
+      renderAnswer(result.segments, result.citations);
       renderSources(result.citations);
       $("result").hidden = false;
       setStatus(status, "");

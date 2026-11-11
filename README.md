@@ -132,9 +132,10 @@ Requirements: .NET 10 SDK and the gcloud CLI.
 
 ```sh
 dotnet test
+node --test "tests/js/*.test.mjs"
 ```
 
-The tests don't call Google Cloud. They cover citation mapping (including UTF-8 byte offsets), file validation and safe names, startup validation, the API key check, the "no answer" path, and the rate limiter.
+The tests don't call Google Cloud. The .NET tests cover citation mapping (including UTF-8 byte offsets), matching each answer sentence to a passage, file validation and safe names, startup validation, the API key check, the "no answer" path, and the rate limiters. The JavaScript tests (Node 20+) cover lining up a cited chunk with the PDF text for highlighting.
 
 ## Deploy to Cloud Run (optional)
 

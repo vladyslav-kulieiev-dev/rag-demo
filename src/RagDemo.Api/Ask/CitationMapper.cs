@@ -80,19 +80,19 @@ public static class CitationMapper
             case Answer.Types.Reference.ContentOneofCase.UnstructuredDocumentInfo:
                 var doc = reference.UnstructuredDocumentInfo;
                 return new Citation(number, TitleOr(doc.Title, doc.Uri), doc.Uri,
-                    Trim(doc.ChunkContents.FirstOrDefault()?.Content));
+                    Trim(doc.ChunkContents.FirstOrDefault()?.Content), FullText(reference));
 
             case Answer.Types.Reference.ContentOneofCase.ChunkInfo:
                 var chunk = reference.ChunkInfo;
                 var meta = chunk.DocumentMetadata;
-                return new Citation(number, TitleOr(meta?.Title, meta?.Uri), meta?.Uri ?? "", Trim(chunk.Content));
+                return new Citation(number, TitleOr(meta?.Title, meta?.Uri), meta?.Uri ?? "", Trim(chunk.Content), chunk.Content);
 
             case Answer.Types.Reference.ContentOneofCase.StructuredDocumentInfo:
                 var structured = reference.StructuredDocumentInfo;
-                return new Citation(number, TitleOr(structured.Title, structured.Uri), structured.Uri, "");
+                return new Citation(number, TitleOr(structured.Title, structured.Uri), structured.Uri, "", "");
 
             default:
-                return new Citation(number, "Unknown source", "", "");
+                return new Citation(number, "Unknown source", "", "", "");
         }
     }
 

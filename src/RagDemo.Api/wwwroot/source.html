@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Source</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #525659; }
+    iframe { display: block; width: 100%; height: 100%; border: 0; }
+  </style>
+</head>
+<body>
+<iframe id="viewer" title="Document viewer"></iframe>
+
+<script type="module">
+  // Opens a PDF in the bundled PDF.js viewer and highlights the cited chunk.
+  // URL: /source.html?uri=<gs:// uri>#chunk=<chunk text>&q=<sentence to fall back to>
+  // The texts go in the hash so long chunks never reach the server's URL length limit.
+  import { alignChunk } from "/chunk-align.mjs";
+
+  const NOT_FOUND = 1; // PDF.js FindState.NOT_FOUND
+
+  const uri = new URLSearchParams(location.search).get("uri") || "";
+  const hash = new URLSearchParams(location.hash.slice(1));
+  const chunk = hash.get("chunk") || "";
+  const fallbackText = hash.get("q") || "";
+  document.title = uri.slice(uri.lastIndexOf("/") + 1).replace(/^[0-9a-f]{32}-/, "") || "Source";
+
+  const fileUrl = "/api/documents/file?uri=" + encodeURIComponent(uri);
+  const frame = document.getElementById("viewer");
+  frame.src = "/pdfjs/web/viewer.html?file=" + encodeURIComponent(fileUrl);
+
+  // Page text built the same way PDF.js builds it for searching, so matched pieces are found exactly.
+  async function pageTexts(pdf) {
+    const pages = [];
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const content = await (await pdf.getPage(i)).getTextContent({ disableNormalization: true });
+      pages.push(content.items.map(item => item.str + (item.hasEOL ? "\n" : "")).join(""));
+    }
+    return pages;
+  }
+
+  // Searches to try if the chunk can't be lined up with the PDF text, from most to least exact.
+  function fallbackSearches(raw) {
+    const full = raw.replace(/[#*_`>|]/g, " ").replace(/…/g, " ").replace(/\s+/g, " ").trim();
+    if (!full) return [];
+    const searches = [full];
+    const parts = full.split(/[,;:()]|\s[–-]\s/).map(p => p.trim()).filter(p => p.split(" ").length >= 4);
+    if (parts.length > 1) searches.push(parts);
+    searches.push(full.split(" ").slice(0, 6).join(" "));
+    return searches;
+  }
+
+  // PDF.js shows the current match in green and other matches in pink. The chunk is passed as several
+  // pieces, so make them all green to read as one highlight. Skipped in high-contrast mode, which has its own style.
+  // The viewer's Content-Security-Policy (style-src 'self') blocks <style> elements, so the rule is added
+  // as a constructed stylesheet, which that policy doesn't cover.
+  function useOneHighlightColor(viewerWindow) {
+    const sheet = new viewerWindow.CSSStyleSheet();
+    sheet.replaceSync(`
+      @media (forced-colors: none) {
+        .textLayer .highlight.highlight {
+          --highlight-bg-color: rgb(0 100 0 / 0.25);
+          --highlight-selected-bg-color: rgb(0 100 0 / 0.25);
+        }
+      }`);
+    const viewerDocument = viewerWindow.document;
+    viewerDocument.adoptedStyleSheets = [...viewerDocument.adoptedStyleSheets, sheet];
+  }
+
+  frame.addEventListener("load", async () => {
+    const app = frame.contentWindow.PDFViewerApplication;
+    if (!app) return;
+    useOneHighlightColor(frame.contentWindow);
+    await app.initializedPromise;
+    if (!app.pdfViewer?.pagesCount) {
+      await new Promise(resolve => app.eventBus.on("pagesinit", resolve, { once: true }));
+    }
+
+    // First choice: every piece of the PDF text that the chunk lines up with.
+    // PDF.js highlights all pieces of a list query, which together cover the chunk.
+    const searches = [];
+    if (chunk) {
+      const pieces = alignChunk(await pageTexts(app.pdfDocument), chunk);
+      if (pieces.length > 0) {
+        app.page = pieces[0].page + 1; // start at the chunk, so the first match shown is in it
+        searches.push(pieces.map(p => p.text));
+      }
+    }
+    searches.push(...fallbackSearches(fallbackText || chunk));
+    if (searches.length === 0) return;
+
+    let attempt = 0;
+    const find = () => app.eventBus.dispatch("find", {
+      source: window,
+      type: "",
+      query: searches[attempt],
+      caseSensitive: false,
+      entireWord: false,
+      highlightAll: true,
+      findPrevious: false,
+      matchDiacritics: false
+    });
+
+    app.eventBus.on("updatefindcontrolstate", evt => {
+      if (evt.state === NOT_FOUND && attempt < searches.length - 1) {
+        attempt++;
+        find();
+      }
+    });
+    find();
+  });
+</script>
+</body>
+</html>
