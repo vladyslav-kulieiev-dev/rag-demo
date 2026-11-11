@@ -12,35 +12,65 @@ public static class CitationMapper
     public static AskResponse Map(Answer answer)
     {
         if (answer.AnswerSkippedReasons.Count > 0 || string.IsNullOrWhiteSpace(answer.AnswerText))
-            return new AskResponse(NoAnswerMessage, false, []);
+            return new AskResponse(NoAnswerMessage, false, [], [new AnswerSegment(NoAnswerMessage, [])]);
 
-        // Number each reference the first time a citation uses it, so the list follows reading order.
+        // Citation indexes are UTF-8 byte offsets, so all slicing happens on the byte form of the text.
+        var bytes = Encoding.UTF8.GetBytes(answer.AnswerText);
+
+        // Number each reference the first time it's cited, so the source list follows reading order.
         var numbers = new Dictionary<int, int>();
         var citations = new List<Citation>();
-        var markers = new List<(int ByteIndex, string Text)>();
+        var segments = new List<(string Text, List<SegmentSource> Sources)>();
+        var position = 0;
 
-        foreach (var citation in answer.Citations)
+        foreach (var citation in answer.Citations.OrderBy(c => c.EndIndex))
         {
-            var cited = new SortedSet<int>();
-            foreach (var source in citation.Sources)
-            {
-                if (!int.TryParse(source.ReferenceId, out var index) || index < 0 || index >= answer.References.Count)
-                    continue;
+            var referenceIndexes = citation.Sources
+                .Select(s => int.TryParse(s.ReferenceId, out var i) ? i : -1)
+                .Where(i => i >= 0 && i < answer.References.Count)
+                .Distinct()
+                .ToList();
+            if (referenceIndexes.Count == 0) continue;
 
+            var end = SnapToCharBoundary(bytes, Math.Clamp((int)citation.EndIndex, position, bytes.Length));
+            var start = SnapToCharBoundary(bytes, Math.Clamp((int)citation.StartIndex, 0, end));
+            var claim = Encoding.UTF8.GetString(bytes, start, end - start);
+
+            var sources = new List<SegmentSource>();
+            foreach (var index in referenceIndexes)
+            {
+                var reference = answer.References[index];
                 if (!numbers.TryGetValue(index, out var number))
                 {
                     number = citations.Count + 1;
                     numbers[index] = number;
-                    citations.Add(ToCitation(number, answer.References[index]));
+                    citations.Add(ToCitation(number, reference));
                 }
-                cited.Add(number);
+                sources.Add(new SegmentSource(number, PassageMatcher.FindBestPassage(FullText(reference), claim)));
             }
 
-            if (cited.Count > 0)
-                markers.Add(((int)citation.EndIndex, string.Concat(cited.Select(n => $"[{n}]"))));
+            if (end == position && segments.Count > 0)
+            {
+                // Another citation ending at the same place: add its sources to the previous piece.
+                var previous = segments[^1].Sources;
+                previous.AddRange(sources.Where(s => previous.All(p => p.Number != s.Number)));
+            }
+            else
+            {
+                segments.Add((Encoding.UTF8.GetString(bytes, position, end - position), sources));
+            }
+            position = end;
         }
 
-        return new AskResponse(InsertMarkers(answer.AnswerText, markers), true, citations);
+        if (position < bytes.Length)
+            segments.Add((Encoding.UTF8.GetString(bytes, position, bytes.Length - position), []));
+
+        var answerSegments = segments
+            .Select(s => new AnswerSegment(s.Text, s.Sources.OrderBy(x => x.Number).ToList()))
+            .ToList();
+        var text = string.Concat(answerSegments.Select(s => s.Text + string.Concat(s.Sources.Select(x => $"[{x.Number}]"))));
+
+        return new AskResponse(text, true, citations, answerSegments);
     }
 
     private static Citation ToCitation(int number, Answer.Types.Reference reference)
@@ -66,27 +96,16 @@ public static class CitationMapper
         }
     }
 
-    /// <summary>Citation indexes are UTF-8 byte offsets, so markers are inserted on the byte form of the text.</summary>
-    internal static string InsertMarkers(string text, List<(int ByteIndex, string Text)> markers)
+    /// <summary>The whole cited text, untrimmed, for passage matching.</summary>
+    private static string FullText(Answer.Types.Reference reference) => reference.ContentCase switch
     {
-        if (markers.Count == 0) return text;
+        Answer.Types.Reference.ContentOneofCase.UnstructuredDocumentInfo =>
+            string.Join('\n', reference.UnstructuredDocumentInfo.ChunkContents.Select(c => c.Content)),
+        Answer.Types.Reference.ContentOneofCase.ChunkInfo => reference.ChunkInfo.Content,
+        _ => "",
+    };
 
-        var bytes = Encoding.UTF8.GetBytes(text);
-        var output = new StringBuilder(text.Length + markers.Count * 4);
-        var position = 0;
-
-        foreach (var (byteIndex, marker) in markers.OrderBy(m => m.ByteIndex))
-        {
-            var end = SnapToCharBoundary(bytes, Math.Clamp(byteIndex, position, bytes.Length));
-            output.Append(Encoding.UTF8.GetString(bytes, position, end - position)).Append(marker);
-            position = end;
-        }
-
-        output.Append(Encoding.UTF8.GetString(bytes, position, bytes.Length - position));
-        return output.ToString();
-    }
-
-    // Moves forward past UTF-8 continuation bytes (10xxxxxx) so a marker never splits a character.
+    // Moves forward past UTF-8 continuation bytes (10xxxxxx) so a slice never splits a character.
     private static int SnapToCharBoundary(byte[] bytes, int index)
     {
         while (index < bytes.Length && (bytes[index] & 0xC0) == 0x80) index++;

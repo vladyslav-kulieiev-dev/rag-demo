@@ -63,6 +63,63 @@ public class CitationMapperTests
     }
 
     [Fact]
+    public void Each_marker_gets_the_passage_that_supports_its_sentence()
+    {
+        // Two sentences cite the same chunk, but each is supported by a different sentence in it.
+        const string first = "Data breaches must be reported within 72 hours.";
+        const string second = " Processors notify the controller.";
+        var answer = new Answer
+        {
+            AnswerText = first + second,
+            References =
+            {
+                Unstructured("GDPR", "gs://b/uploads/gdpr.pdf",
+                    "The controller shall report a personal data breach to the authority within 72 hours. " +
+                    "The processor shall notify the controller without undue delay."),
+            },
+            Citations =
+            {
+                Cite(0, System.Text.Encoding.UTF8.GetByteCount(first), "0"),
+                Cite(System.Text.Encoding.UTF8.GetByteCount(first) + 1, System.Text.Encoding.UTF8.GetByteCount(first + second), "0"),
+            },
+        };
+
+        var result = CitationMapper.Map(answer);
+
+        Assert.Equal(first + "[1]" + second + "[1]", result.Answer);
+        Assert.Collection(result.Segments,
+            s =>
+            {
+                Assert.Equal(first, s.Text);
+                Assert.StartsWith("The controller shall report", Assert.Single(s.Sources).Passage);
+            },
+            s =>
+            {
+                Assert.Equal(second, s.Text);
+                Assert.StartsWith("The processor shall notify", Assert.Single(s.Sources).Passage);
+            });
+    }
+
+    [Fact]
+    public void Segments_keep_text_after_the_last_citation_and_merge_markers_at_the_same_place()
+    {
+        var answer = new Answer
+        {
+            AnswerText = "Cited. Not cited.",
+            References = { Unstructured("A", "gs://b/a", ""), Unstructured("B", "gs://b/b", "") },
+            Citations = { Cite(0, 6, "0"), Cite(0, 6, "1") },
+        };
+
+        var result = CitationMapper.Map(answer);
+
+        Assert.Equal("Cited.[1][2] Not cited.", result.Answer);
+        Assert.Equal(2, result.Segments.Count);
+        Assert.Equal([1, 2], result.Segments[0].Sources.Select(s => s.Number));
+        Assert.Empty(result.Segments[1].Sources);
+        Assert.Null(result.Segments[0].Sources[0].Passage); // empty chunk, so nothing to match
+    }
+
+    [Fact]
     public void Byte_offsets_are_respected_for_non_ascii_text()
     {
         // "Café" is 5 bytes in UTF-8, so "Café ok." ends at byte 9 but char 8.
