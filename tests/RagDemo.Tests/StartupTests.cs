@@ -119,6 +119,23 @@ public class StartupTests
     }
 
     [Fact]
+    public async Task Daily_ask_limit_is_shared_by_all_callers_and_explains_itself()
+    {
+        using var factory = Factory(new(ValidSettings) { ["RateLimit:PermitLimit"] = "100", ["RateLimit:DailyAskLimit"] = "2" });
+        var client = factory.CreateClient();
+
+        for (var i = 0; i < 2; i++)
+            Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/ask", new { question = "Q?" })).StatusCode);
+
+        var rejected = await client.PostAsJsonAsync("/api/ask", new { question = "Q?" });
+        Assert.Equal(HttpStatusCode.TooManyRequests, rejected.StatusCode);
+        Assert.Contains("daily", await rejected.Content.ReadAsStringAsync());
+
+        // Other endpoints don't count toward the daily question limit.
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/documents")).StatusCode);
+    }
+
+    [Fact]
     public async Task Rate_limiter_returns_429_after_the_limit()
     {
         using var factory = Factory(new(ValidSettings) { ["RateLimit:PermitLimit"] = "3" });

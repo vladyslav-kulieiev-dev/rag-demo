@@ -151,6 +151,7 @@ gcloud run deploy ragdemo --source . --region us-central1 \
 ## Cost protection
 
 - 10 requests per minute per IP across `/api/ask` and `/api/documents` (`RateLimit:PermitLimit`, `RateLimit:WindowSeconds`). Extra requests get `429`.
+- 200 questions per day shared by all visitors (`RateLimit:DailyAskLimit`, `0` turns it off). The count is kept in memory, so each Cloud Run instance counts on its own and a restart resets it: it stops floods, but it isn't an exact daily total.
 - Optional `X-Api-Key` on uploads (`Upload:ApiKey`) so strangers can't fill the index.
 - Uploads limited to 10 MB and to PDF, TXT, MD, HTML and DOCX.
 - Budget alerts and API quotas in the Google Cloud project; `--max-instances` on Cloud Run.

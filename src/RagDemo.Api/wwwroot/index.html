@@ -129,13 +129,15 @@ function sourceUrl(citation) {
   }
 
   async function errorText(response) {
-    if (response.status === 429) return "Too many requests. Wait a minute and try again.";
+    const fallback = response.status === 429
+      ? "Too many requests. Wait a minute and try again."
+      : `Request failed (${response.status}).`;
     try {
       const problem = await response.json();
       const fieldErrors = problem.errors ? Object.values(problem.errors).flat().join(" ") : "";
-      return fieldErrors || problem.detail || problem.title || `Request failed (${response.status}).`;
+      return fieldErrors || problem.detail || problem.title || fallback;
     } catch {
-      return `Request failed (${response.status}).`;
+      return fallback;
     }
   }
 
