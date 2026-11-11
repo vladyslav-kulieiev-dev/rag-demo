@@ -1,5 +1,6 @@
 using System.Text;
 using Google.Cloud.DiscoveryEngine.V1;
+using RagDemo.Api.Documents;
 
 namespace RagDemo.Api.Ask;
 
@@ -112,10 +113,15 @@ public static class CitationMapper
         return index;
     }
 
-    private static string TitleOr(string? title, string? uri) =>
-        !string.IsNullOrWhiteSpace(title) ? title
-        : !string.IsNullOrWhiteSpace(uri) ? uri[(uri.LastIndexOf('/') + 1)..]
-        : "Untitled document";
+    /// <summary>
+    /// A readable title. Vertex AI Search takes the title from the stored file name
+    /// ("88146533…-Kodeks_pracy"), so it's cleaned up the same way as the document list.
+    /// </summary>
+    internal static string TitleOr(string? title, string? uri)
+    {
+        var name = DocumentNames.Readable(!string.IsNullOrWhiteSpace(title) ? title : uri);
+        return name.Length > 0 ? name : "Untitled document";
+    }
 
     private static string Trim(string? snippet)
     {

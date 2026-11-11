@@ -24,7 +24,8 @@
   const hash = new URLSearchParams(location.hash.slice(1));
   const chunk = hash.get("chunk") || "";
   const fallbackText = hash.get("q") || "";
-  document.title = uri.slice(uri.lastIndexOf("/") + 1).replace(/^[0-9a-f]{32}-/, "") || "Source";
+  // Same readable name as the app: no folder, upload id, extension or underscores ("Kodeks pracy").
+  document.title = uri.slice(uri.lastIndexOf("/") + 1).replace(/^[0-9a-f]{32}-/, "").replace(/\.[a-z]+$/i, "").replaceAll("_", " ") || "Source";
 
   const fileUrl = "/api/documents/file?uri=" + encodeURIComponent(uri);
   const frame = document.getElementById("viewer");

@@ -8,7 +8,8 @@ namespace RagDemo.Api.Documents;
 
 public sealed record UploadResult(string GcsUri, string OperationName);
 
-public sealed record IndexedDocument(string Id, string Uri, string FileName);
+/// <param name="Title">The name to show people, e.g. "Kodeks pracy".</param>
+public sealed record IndexedDocument(string Id, string Uri, string FileName, string Title);
 
 public sealed record StoredFile(byte[] Content, string ContentType);
 
@@ -60,7 +61,7 @@ public sealed class DocumentIndexer(
         var page = await Documents.ListDocumentsAsync(request).ReadPageAsync(MaxListed, ct);
 
         return page
-            .Select(d => new IndexedDocument(d.Id, d.Content?.Uri ?? "", FileNameFromUri(d.Content?.Uri)))
+            .Select(d => new IndexedDocument(d.Id, d.Content?.Uri ?? "", FileNameFromUri(d.Content?.Uri), DocumentNames.Readable(d.Content?.Uri)))
             .ToList();
     }
 

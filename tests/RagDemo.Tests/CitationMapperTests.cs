@@ -170,10 +170,19 @@ public class CitationMapperTests
         };
 
         var citation = Assert.Single(CitationMapper.Map(answer).Citations);
-        Assert.Equal("report.pdf", citation.Title); // falls back to the file name when there's no title
+        Assert.Equal("report", citation.Title); // falls back to the file name when there's no title
         Assert.Equal("a chunk of text", citation.Snippet);
         Assert.Equal("  a   chunk\nof text ", citation.Chunk); // the whole chunk, untouched, for highlighting
     }
+
+    [Theory]
+    [InlineData("88146533e9e740dda13901f4ba8c6f1b-Kodeks_pracy", null, "Kodeks pracy")]
+    [InlineData(null, "gs://b/uploads/88146533e9e740dda13901f4ba8c6f1b-GDPR.pdf", "GDPR")]
+    [InlineData("Annual report", null, "Annual report")]
+    [InlineData("short-name", null, "short-name")]
+    [InlineData(null, null, "Untitled document")]
+    public void Titles_drop_the_upload_id_and_underscores(string? title, string? uri, string expected) =>
+        Assert.Equal(expected, CitationMapper.TitleOr(title, uri));
 
     [Fact]
     public void Skipped_answer_returns_no_answer_message()

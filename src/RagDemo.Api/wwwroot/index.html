@@ -38,63 +38,83 @@
     .status.error { color: var(--error); }
     ul.docs { list-style: none; padding: 0; margin: 12px 0 0; font-size: .92rem; }
     ul.docs li { padding: 6px 0; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
-    .answer { white-space: pre-wrap; margin: 0 0 16px; }
+    .answer { margin: 0 0 16px; }
+    .answer > :first-child { margin-top: 0; }
+    .answer p, .answer ul, .answer ol { margin: 0 0 10px; }
+    .answer ul, .answer ol { padding-left: 22px; }
+    .answer li { margin-bottom: 4px; }
     .answer sup a { text-decoration: none; font-weight: 600; color: var(--accent); }
+    .examples { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 14px; }
+    button.example { padding: 6px 12px; font-size: .88rem; font-weight: 500; text-align: left;
+                     background: var(--bg); color: var(--text); border: 1px solid var(--border); }
+    button.example:hover { border-color: var(--accent); }
     ol.sources { padding-left: 22px; margin: 0; }
     ol.sources li { margin-bottom: 12px; overflow-wrap: anywhere; }
     ol.sources a { color: var(--accent); font-weight: 600; }
     .snippet { color: var(--muted); font-size: .9rem; margin-top: 2px; }
     .uri { color: var(--muted); font-size: .8rem; font-family: ui-monospace, Consolas, monospace; }
-    details summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
+    details summary { cursor: pointer; color: var(--muted); font-size: .95rem; font-weight: 600; }
+    details[open] summary { margin-bottom: 12px; }
   </style>
 </head>
 <body>
 <main>
   <h1>RagDemo</h1>
-  <p class="lead">Upload documents, then ask questions. Answers come only from your documents and cite their sources.</p>
+  <p class="lead">Ask questions about the documents below. Answers come only from those documents, and every
+    claim links to the exact passage in the source PDF.</p>
 
   <section>
-    <h2>1. Add a document</h2>
-    <label for="file">PDF, TXT, MD, HTML or DOCX, up to 10 MB</label>
-    <input id="file" type="file" accept=".pdf,.txt,.md,.html,.htm,.docx">
-    <details style="margin-top:12px">
-      <summary>Upload key (if the server requires one)</summary>
-      <input id="apiKey" type="password" autocomplete="off" style="margin-top:8px" placeholder="X-Api-Key">
-    </details>
-    <div class="row">
-      <button id="uploadBtn">Upload</button>
-      <span id="uploadStatus" class="status" role="status"></span>
-    </div>
-  </section>
-
-  <section>
-    <h2>2. Indexed documents</h2>
-    <div class="row" style="margin-top:0">
-      <button id="refreshBtn" class="secondary">Refresh</button>
-      <span class="status">New uploads take a few minutes to appear.</span>
-    </div>
-    <ul id="docs" class="docs"></ul>
-  </section>
-
-  <section>
-    <h2>3. Ask a question</h2>
-    <label for="question">Question</label>
-    <textarea id="question" maxlength="1000" placeholder="What does the report say about…?"></textarea>
+    <h2>Ask a question</h2>
+    <label for="question">Question, in any language</label>
+    <textarea id="question" maxlength="1000" placeholder="Ask about the documents listed below…"></textarea>
     <div class="row">
       <button id="askBtn">Ask</button>
       <span id="askStatus" class="status" role="status"></span>
+    </div>
+    <div class="examples">
+      <span class="status">Try:</span>
+      <button class="example" type="button">Ile dni urlopu wypoczynkowego przysługuje pracownikowi?</button>
+      <button class="example" type="button">Kiedy pracownik podejmujący pracę po raz pierwszy nabywa prawo do urlopu?</button>
+      <button class="example" type="button">How long does a company have to report a data breach?</button>
+      <button class="example" type="button">What is the maximum fine for breaking the GDPR?</button>
     </div>
   </section>
 
   <section id="result" hidden>
     <h2>Answer</h2>
-    <p id="answer" class="answer"></p>
+    <div id="answer" class="answer"></div>
     <h2 id="sourcesTitle">Sources</h2>
     <ol id="sources" class="sources"></ol>
   </section>
+
+  <section>
+    <h2>Documents</h2>
+    <ul id="docs" class="docs"></ul>
+    <div class="row">
+      <button id="refreshBtn" class="secondary">Refresh</button>
+    </div>
+  </section>
+
+  <section>
+    <details>
+      <summary>Add a document (owner only)</summary>
+      <p class="status">Uploading needs an upload key, so this demo is read-only for visitors.
+        New documents take a few minutes to be indexed.</p>
+      <label for="file">PDF, TXT, MD, HTML or DOCX, up to 10 MB</label>
+      <input id="file" type="file" accept=".pdf,.txt,.md,.html,.htm,.docx">
+      <label for="apiKey" style="margin-top:12px">Upload key</label>
+      <input id="apiKey" type="password" autocomplete="off" placeholder="X-Api-Key">
+      <div class="row">
+        <button id="uploadBtn">Upload</button>
+        <span id="uploadStatus" class="status" role="status"></span>
+      </div>
+    </details>
+  </section>
 </main>
 
-<script>
+<script type="module">
+  import { parseAnswer, marker } from "/answer-format.mjs";
+
   const $ = id => document.getElementById(id);
 
   // Files are served through the API, so visitors don't need access to the bucket.
@@ -139,9 +159,7 @@
       }
       for (const doc of docs) {
         const li = document.createElement("li");
-        li.textContent = doc.fileName || doc.id;
-        const uri = Object.assign(document.createElement("div"), { className: "uri", textContent: doc.uri });
-        li.append(uri);
+        li.textContent = doc.title || doc.fileName || doc.id;
         list.append(li);
       }
     } catch (e) {
@@ -174,31 +192,60 @@
     }
   });
 
-  // Builds the answer from its segments. Each [n] marker opens the PDF with the cited chunk highlighted
-  // (the tooltip shows the sentence in it that best supports this part of the answer); for other files
-  // it jumps to the source list. Uses DOM nodes, not innerHTML.
+  // Builds the answer from its segments, with Markdown formatting. Each [n] marker opens the PDF with the
+  // cited chunk highlighted (the tooltip shows the sentence in it that best supports this part of the answer);
+  // for other files it jumps to the source list. Uses DOM nodes, never innerHTML.
   function renderAnswer(segments, citations) {
     const byNumber = new Map(citations.map(c => [c.number, c]));
-    const target = $("answer");
-    target.replaceChildren();
+
+    // Join the segments into one Markdown text, with a placeholder where each marker goes.
+    const markers = [];
+    let text = "";
     for (const segment of segments) {
-      target.append(segment.text);
+      text += segment.text;
       for (const source of segment.sources) {
         const citation = byNumber.get(source.number);
         if (!citation) continue;
-        const link = Object.assign(document.createElement("a"), { textContent: `[${source.number}]` });
-        if (isPdf(citation.uri)) {
-          Object.assign(link, {
-            href: sourceUrl(citation, source.passage), target: "_blank", rel: "noopener", title: source.passage || citation.title
-          });
-        } else {
-          link.href = `#source-${source.number}`;
-        }
-        const sup = document.createElement("sup");
-        sup.append(link);
-        target.append(sup);
+        text += marker(markers.length);
+        markers.push({ source, citation });
       }
     }
+
+    const markerLink = ({ source, citation }) => {
+      const link = Object.assign(document.createElement("a"), { textContent: `[${source.number}]` });
+      if (isPdf(citation.uri)) {
+        Object.assign(link, {
+          href: sourceUrl(citation, source.passage), target: "_blank", rel: "noopener", title: source.passage || citation.title
+        });
+      } else {
+        link.href = `#source-${source.number}`;
+      }
+      const sup = document.createElement("sup");
+      sup.append(link);
+      return sup;
+    };
+
+    const inlineNodes = parts => parts.map(part => {
+      if (part.marker !== undefined) return markers[part.marker] ? markerLink(markers[part.marker]) : "";
+      let node = document.createTextNode(part.text);
+      if (part.italic) node = wrap("em", node);
+      if (part.bold) node = wrap("strong", node);
+      return node;
+    });
+    const wrap = (tag, ...children) => {
+      const element = document.createElement(tag);
+      element.append(...children);
+      return element;
+    };
+
+    const target = $("answer");
+    target.replaceChildren(...parseAnswer(text).map(block => {
+      if (block.type === "ul" || block.type === "ol") {
+        return wrap(block.type, ...block.items.map(item => wrap("li", ...inlineNodes(item))));
+      }
+      const paragraph = wrap("p", ...inlineNodes(block.inline));
+      return block.type === "heading" ? wrap("p", wrap("strong", paragraph)) : paragraph;
+    }));
   }
 
   function renderSources(citations) {
@@ -214,7 +261,6 @@
       });
       li.append(link);
       if (c.snippet) li.append(Object.assign(document.createElement("div"), { className: "snippet", textContent: c.snippet }));
-      li.append(Object.assign(document.createElement("div"), { className: "uri", textContent: c.uri }));
       list.append(li);
     }
   }
@@ -249,6 +295,12 @@
   $("question").addEventListener("keydown", e => {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) ask();
   });
+  for (const example of document.querySelectorAll("button.example")) {
+    example.addEventListener("click", () => {
+      $("question").value = example.textContent;
+      ask();
+    });
+  }
   $("refreshBtn").addEventListener("click", loadDocuments);
   loadDocuments();
 </script>

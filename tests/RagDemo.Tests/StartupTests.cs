@@ -35,7 +35,62 @@ public class StartupTests
             Task.FromResult<IReadOnlyList<IndexedDocument>>([]);
 
         public Task<StoredFile?> DownloadAsync(string gcsUri, CancellationToken ct) =>
-            Task.FromResult<StoredFile?>(null);
+            Task.FromResult(gcsUri switch
+            {
+                "gs://bucket/uploads/notes.txt" => new StoredFile("Zażółć gęślą jaźń"u8.ToArray(), "text/plain"),
+                "gs://bucket/uploads/page.html" => new StoredFile("<script>alert(1)</script>"u8.ToArray(), "text/html"),
+                "gs://bucket/uploads/doc.pdf" => new StoredFile("%PDF-1.7"u8.ToArray(), "application/pdf"),
+                _ => (StoredFile?)null,
+            });
+    }
+
+    private static Task<HttpResponseMessage> GetFile(HttpClient client, string uri) =>
+        client.GetAsync("/api/documents/file?uri=" + Uri.EscapeDataString(uri));
+
+    [Fact]
+    public async Task Text_files_are_served_as_utf8()
+    {
+        using var factory = Factory(ValidSettings);
+        var response = await GetFile(factory.CreateClient(), "gs://bucket/uploads/notes.txt");
+
+        Assert.Equal("text/plain; charset=utf-8", response.Content.Headers.ContentType!.ToString());
+        Assert.Equal("Zażółć gęślą jaźń", await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task Html_files_are_sandboxed_and_pdfs_are_not()
+    {
+        using var factory = Factory(ValidSettings);
+        var client = factory.CreateClient();
+
+        var html = await GetFile(client, "gs://bucket/uploads/page.html");
+        Assert.Equal("sandbox", html.Headers.GetValues("Content-Security-Policy").Single());
+        Assert.Equal("nosniff", html.Headers.GetValues("X-Content-Type-Options").Single());
+
+        var pdf = await GetFile(client, "gs://bucket/uploads/doc.pdf");
+        Assert.Equal("application/pdf", pdf.Content.Headers.ContentType!.MediaType);
+        Assert.False(pdf.Headers.Contains("Content-Security-Policy"));
+    }
+
+    [Fact]
+    public async Task Unknown_files_return_404()
+    {
+        using var factory = Factory(ValidSettings);
+        var response = await GetFile(factory.CreateClient(), "gs://other-bucket/secret.pdf");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Pdfjs_files_are_served_and_pages_are_not_cached()
+    {
+        using var factory = Factory(ValidSettings);
+        var client = factory.CreateClient();
+
+        var translation = await client.GetAsync("/pdfjs/web/locale/en-US/viewer.ftl");
+        Assert.Equal(HttpStatusCode.OK, translation.StatusCode);
+
+        var page = await client.GetAsync("/source.html");
+        Assert.Equal("no-cache", page.Headers.CacheControl!.ToString());
     }
 
     private sealed class FakeAnswerClient : IAnswerClient

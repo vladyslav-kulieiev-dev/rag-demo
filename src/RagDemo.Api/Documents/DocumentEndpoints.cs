@@ -21,13 +21,30 @@ public static class DocumentEndpoints
         group.MapGet("/", async (IDocumentIndexer indexer, CancellationToken ct) =>
             TypedResults.Ok(await indexer.ListAsync(ct)));
 
-        group.MapGet("/file", async (string uri, IDocumentIndexer indexer, CancellationToken ct) =>
-        {
-            var file = await indexer.DownloadAsync(uri, ct);
-            return file is null ? Results.NotFound() : Results.File(file.Content, file.ContentType);
-        });
+        group.MapGet("/file", DownloadAsync);
 
         return group;
+    }
+
+    private static async Task<IResult> DownloadAsync(string uri, HttpResponse response, IDocumentIndexer indexer, CancellationToken ct)
+    {
+        var file = await indexer.DownloadAsync(uri, ct);
+        if (file is null) return TypedResults.NotFound();
+
+        var contentType = file.ContentType;
+        var isText = contentType.StartsWith("text/", StringComparison.OrdinalIgnoreCase);
+
+        // Text stored without a charset makes the browser guess, and Polish letters come out garbled.
+        if (isText && !contentType.Contains("charset", StringComparison.OrdinalIgnoreCase))
+            contentType += "; charset=utf-8";
+
+        response.Headers.XContentTypeOptions = "nosniff";
+        // Uploaded HTML is shown in a sandbox: its scripts don't run and it can't act as this site.
+        // (Not for PDFs: browsers won't show a PDF in a sandboxed page.)
+        if (contentType.StartsWith("text/html", StringComparison.OrdinalIgnoreCase))
+            response.Headers.ContentSecurityPolicy = "sandbox";
+
+        return TypedResults.File(file.Content, contentType);
     }
 
     private static async Task<IResult> UploadAsync(
